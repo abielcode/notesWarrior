@@ -13,58 +13,58 @@ SkipNotes is a notes app that stores content locally as JSON, requires no backen
 
 ```
  ╔══════════════════════════════════════════════════════════════╗
- ║  VIEWS  (SwiftUI — SkipFuseUI)                              ║
+ ║  VIEWS  (SwiftUI — SkipFuseUI)                               ║
  ║                                                              ║
  ║   NoteListView          NoteRowView         NoteEditorView   ║
- ║   ┌──────────────┐      ┌───────────┐       ┌────────────┐  ║
- ║   │ @State       │      │ let note  │       │ @Binding   │  ║
- ║   │ vm: Notes    │─────▶│ :NoteData │       │ note:      │  ║
- ║   │ ViewModel    │      └───────────┘       │ NoteData   │  ║
- ║   └──────┬───────┘                          └─────┬──────┘  ║
- ╚══════════╪═══════════════════════════════════════╪══════════╝
+ ║   ┌──────────────┐      ┌───────────┐       ┌────────────┐   ║
+ ║   │ @State       │      │ let note  │       │ @Binding   │   ║
+ ║   │ vm: Notes    │─────▶│ :NoteData │       │ note:      │   ║
+ ║   │ ViewModel    │      └───────────┘       │ NoteData   │   ║
+ ║   └──────┬───────┘                          └─────┬──────┘   ║
+ ╚══════════╪════════════════════════════════════+═══╪════════+═╝
             │ reads / mutates                        │ saves
             ▼                                        ▼
  ╔══════════════════════════════════════════════════════════════╗
  ║  DOMAIN                                                      ║
  ║                                                              ║
- ║   ┌─────────────────────┐     ┌──────────────────────────┐  ║
- ║   │   NotesViewModel    │────▶│  NoteRepositoryProtocol  │  ║
- ║   │   @Observable       │     │  ───────────────────────  │  ║
- ║   │ ─────────────────   │     │  fetchAll() → [NoteData]  │  ║
- ║   │ notes: [NoteData]   │     │  save(_ note: NoteData)   │  ║
- ║   │ errorMessage:String?│     │  delete(id: UUID)         │  ║
- ║   │ ─────────────────   │     └──────────────────────────┘  ║
+ ║   ┌─────────────────────┐     ┌──────────────────────────┐   ║
+ ║   │   NotesViewModel    │────▶│  NoteRepositoryProtocol  │   ║
+ ║   │   @Observable       │     │  ─────────────────────── │   ║
+ ║   │ ─────────────────   │     │  fetchAll() → [NoteData] │   ║
+ ║   │ notes: [NoteData]   │     │  save(_ note: NoteData)  │   ║
+ ║   │ errorMessage:String?│     │  delete(id: UUID)        │   ║
+ ║   │ ─────────────────   │     └──────────────────────────┘   ║
  ║   │ loadNotes()         │                  ▲                 ║
  ║   │ saveNote(_:)        │                  │ conforms        ║
  ║   │ deleteNote(id:)     │                  │                 ║
- ║   │ newNote()           │     ┌────────────┴─────────────┐  ║
+ ║   │ newNote()           │     ┌────────────┴───────────-──┐  ║
  ║   └─────────────────────┘     │        NoteData           │  ║
- ║                               │  ─────────────────────── │  ║
+ ║                               │  ───────────────────────- │  ║
  ║                               │  id: UUID                 │  ║
  ║                               │  content: String          │  ║
  ║                               │  createdAt / updatedAt    │  ║
- ║                               │  ─────────────────────── │  ║
+ ║                               │  ───────────────────────  │  ║
  ║                               │  title: String  (computed)│  ║
  ║                               │  body: String   (computed)│  ║
  ║                               │  previewBody: String      │  ║
- ║                               └──────────────────────────┘  ║
+ ║                               └─────────────────────────-─┘  ║
  ╚══════════════════════════════════════════════════════════════╝
             │ conforms to NoteRepositoryProtocol
             ▼
  ╔══════════════════════════════════════════════════════════════╗
  ║  DATA                                                        ║
  ║                                                              ║
- ║   ┌──────────────────────────┐    ┌───────────────────────┐ ║
+ ║   ┌──────────────────────────┐    ┌─────────────────────-──┐ ║
  ║   │  LocalNoteRepository     │    │      NoteEntity        │ ║
  ║   │  ──────────────────────  │    │  ───────────────────── │ ║
- ║   │  fetchAll() → [NoteData] │───▶│  id: UUID             │ ║
+ ║   │  fetchAll() → [NoteData] │───▶│  id: UUID              │ ║
  ║   │  save(_ note: NoteData)  │    │  content: String       │ ║
- ║   │  delete(id: UUID)        │    │  createdAt: Date        │ ║
- ║   │  ──────────────────────  │    │  updatedAt: Date        │ ║
+ ║   │  delete(id: UUID)        │    │  createdAt: Date       │ ║
+ ║   │  ──────────────────────  │    │  updatedAt: Date       │ ║
  ║   │  loadEntities() private  │    │  ───────────────────── │ ║
  ║   │  persist(_:)   private   │    │  Codable ✓             │ ║
  ║   └────────────┬─────────────┘    │  NoteRepresentable ✓   │ ║
- ║                │ maps             └───────────────────────┘ ║
+ ║                │ maps             └─────────────────────-──┘ ║
  ║                │ NoteEntity ↔ NoteData                       ║
  ║                ▼                                             ║
  ║         FileManager.default                                  ║
@@ -74,15 +74,15 @@ SkipNotes is a notes app that stores content locally as JSON, requires no backen
  ╔══════════════════════════════════════════════════════════════╗
  ║  SHARED  (Foundation only)                                   ║
  ║                                                              ║
- ║   ┌──────────────────────────────────────────────────────┐  ║
+ ║   ┌──────────────────────────────────────────────────────-┐  ║
  ║   │               NoteRepresentable                       │  ║
  ║   │  ──────────────────────────────────────────────────   │  ║
  ║   │  id: UUID  ·  content: String                         │  ║
  ║   │  createdAt: Date  ·  updatedAt: Date                  │  ║
- ║   │                                                        │  ║
+ ║   │                                                       │  ║
  ║   │  Adopted by:  NoteData (Domain)  ·  NoteEntity (Data) │  ║
  ║   │  No Codable · No UI · No persistence                  │  ║
- ║   └──────────────────────────────────────────────────────┘  ║
+ ║   └──────────────────────────────────────────────────────-┘  ║
  ╚══════════════════════════════════════════════════════════════╝
 ```
 
