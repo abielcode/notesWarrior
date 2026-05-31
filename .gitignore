@@ -30,6 +30,14 @@ playground.xcworkspace
 # .swiftpm
 
 .build/
+.gradle/
+Android/.gradle/
+Android/build/
+Android/app/build/
+Intermediates.noindex/
+xcuserdata/
+*.xcuserstate
+DerivedData/
 
 # CocoaPods
 #

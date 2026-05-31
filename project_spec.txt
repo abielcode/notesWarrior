@@ -1,0 +1,725 @@
+You are an expert Swift/Skip.tools developer. Build a complete, working
+cross-platform notes app using Skip.tools (Skip Fuse mode) that runs
+natively on both iOS and Android from a single Swift/SwiftUI codebase.
+
+══════════════════════════════════════
+PROJECT SETUP
+══════════════════════════════════════
+
+Create a Skip Fuse app project named "SkipNotes" using:
+  skip init --appid=com.abielcode.skipnotes SkipNotes
+
+The project must compile and run on both iOS Simulator and Android
+Emulator without any platform-specific #if blocks in the UI or domain
+layers.
+
+══════════════════════════════════════
+FOLDER STRUCTURE
+══════════════════════════════════════
+
+Sources/SkipNotes/
+├── SkipNotesApp.swift
+├── Shared/
+│   └── NoteRepresentable.swift       ← lightweight identity protocol
+├── Domain/
+│   ├── Models/
+│   │   └── NoteData.swift            ← domain type, conforms to NoteRepresentable
+│   ├── Repositories/
+│   │   └── NoteRepositoryProtocol.swift  ← speaks NoteData only
+│   └── ViewModels/
+│       └── NotesViewModel.swift      ← @Observable, depends on NoteRepositoryProtocol
+├── Data/
+│   ├── NoteEntity.swift              ← Codable, conforms to NoteRepresentable
+│   └── LocalNoteRepository.swift     ← conforms to NoteRepositoryProtocol
+│                                        maps NoteData ↔ NoteEntity internally
+└── Views/
+    ├── NoteListView.swift
+    ├── NoteRowView.swift
+    └── NoteEditorView.swift
+
+Allowed imports per layer:
+  Shared      → Foundation only
+  Domain      → Foundation, SkipModel, Shared
+  Data        → Foundation, SkipFoundation, Shared, Domain
+  Views       → SkipUI (SwiftUI), Domain, Shared
+
+The Data layer is NEVER imported by Domain or Views directly.
+LocalNoteRepository and NoteEntity are invisible above the Data layer.
+
+══════════════════════════════════════
+SHARED LAYER
+══════════════════════════════════════
+
+File: Sources/SkipNotes/Shared/NoteRepresentable.swift
+
+/// Lightweight identity contract shared across layers.
+/// Defines what a note IS — not how it is stored or displayed.
+/// Intentionally has NO Codable, no persistence, no UI concerns.
+protocol NoteRepresentable {
+    var id: UUID { get }
+    var content: String { get }
+    var createdAt: Date { get }
+    var updatedAt: Date { get }
+}
+
+══════════════════════════════════════
+DOMAIN LAYER
+══════════════════════════════════════
+
+── Domain model ──────────────────────
+
+File: Sources/SkipNotes/Domain/Models/NoteData.swift
+
+/// Domain type. What the ViewModel and Views work with exclusively.
+/// Conforms to NoteRepresentable as a shared identity contract.
+/// NOT Codable — domain types have no knowledge of serialization.
+struct NoteData: NoteRepresentable, Identifiable, Equatable {
+    let id: UUID
+    var content: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    /// First line of content, trimmed.
+    /// Returns "Untitled" if the first line is empty.
+    var title: String {
+        let first = content
+            .components(separatedBy: "\n")
+            .first ?? ""
+        let trimmed = first.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "Untitled" : trimmed
+    }
+
+    /// Everything after the first newline, trimmed.
+    /// Returns empty string if there is no second line.
+    var body: String {
+        let lines = content.components(separatedBy: "\n")
+        guard lines.count > 1 else { return "" }
+        return lines.dropFirst()
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// First 80 characters of body, with "…" appended if truncated.
+    var previewBody: String {
+        guard !body.isEmpty else { return "" }
+        if body.count <= 80 { return body }
+        return String(body.prefix(80)) + "…"
+    }
+}
+
+── Repository protocol ───────────────
+
+File: Sources/SkipNotes/Domain/Repositories/NoteRepositoryProtocol.swift
+
+/// Domain persistence contract.
+/// Speaks exclusively in NoteData — the domain type.
+/// The ViewModel depends ONLY on this protocol, never on any
+/// Data layer type.
+protocol NoteRepositoryProtocol {
+    func fetchAll() throws -> [NoteData]
+    func save(_ note: NoteData) throws
+    func delete(id: UUID) throws
+}
+
+── ViewModel ─────────────────────────
+
+File: Sources/SkipNotes/Domain/ViewModels/NotesViewModel.swift
+
+/// Observable domain orchestrator.
+/// Has ZERO knowledge of NoteEntity, LocalNoteRepository,
+/// FileManager, or JSON. Depends only on NoteRepositoryProtocol.
+@Observable
+final class NotesViewModel {
+    var notes: [NoteData] = []
+    var errorMessage: String? = nil
+
+    private let repository: NoteRepositoryProtocol
+
+    /// Default initializer wires the real stack:
+    ///   LocalNoteRepository → NoteEntity → FileManager JSON
+    /// Tests inject a mock NoteRepositoryProtocol directly.
+    init(repository: NoteRepositoryProtocol = LocalNoteRepository()) {}
+
+    /// Loads all notes from repository, sorted by updatedAt descending.
+    func loadNotes() {
+        do {
+            notes = try repository.fetchAll()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Saves a note (insert or update) then reloads.
+    func saveNote(_ note: NoteData) {
+        do {
+            try repository.save(note)
+            loadNotes()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Deletes a note by id then reloads.
+    func deleteNote(id: UUID) {
+        do {
+            try repository.delete(id: id)
+            loadNotes()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Returns a fresh blank NoteData ready for editing.
+    func newNote() -> NoteData {
+        NoteData(
+            id: UUID(),
+            content: "",
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+    }
+}
+
+══════════════════════════════════════
+DATA LAYER
+══════════════════════════════════════
+
+── NoteEntity ────────────────────────
+
+File: Sources/SkipNotes/Data/NoteEntity.swift
+
+/// Internal data layer type. NEVER referenced outside Data/.
+/// Conforms to NoteRepresentable (shared contract) and Codable
+/// (data layer concern — JSON serialization).
+/// Has no computed UI helpers — that is NoteData's responsibility.
+final class NoteEntity: NoteRepresentable, Codable {
+    var id: UUID
+    var content: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(id: UUID, content: String, createdAt: Date, updatedAt: Date) {
+        self.id = id
+        self.content = content
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Maps FROM any NoteRepresentable (e.g. NoteData from ViewModel).
+    /// This is the only mapping constructor — keeps it in one place.
+    convenience init(from representable: some NoteRepresentable) {
+        self.init(
+            id: representable.id,
+            content: representable.content,
+            createdAt: representable.createdAt,
+            updatedAt: representable.updatedAt
+        )
+    }
+}
+
+── LocalNoteRepository ───────────────
+
+File: Sources/SkipNotes/Data/LocalNoteRepository.swift
+
+/// Concrete implementation of NoteRepositoryProtocol.
+/// Owns ALL FileManager and JSON logic — nothing else does.
+/// Internally uses NoteEntity for Codable serialization.
+/// Maps NoteEntity ↔ NoteData at every boundary crossing.
+///
+/// Persistence target:
+///   FileManager.default
+///     .urls(for: .documentDirectory, in: .userDomainMask)
+///     .first!
+///     .appendingPathComponent("notes.json")
+///
+/// This path resolves correctly on both iOS and Android
+/// via SkipFoundation's FileManager — no #if required.
+final class LocalNoteRepository: NoteRepositoryProtocol {
+
+    private let fileURL: URL = {
+        FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)
+            .first!
+            .appendingPathComponent("notes.json")
+    }()
+
+    /// Reads [NoteEntity] from disk, maps each to NoteData,
+    /// sorts by updatedAt descending (domain-level ordering).
+    /// Returns [] if file does not exist.
+    /// Throws on corrupt or unreadable data.
+    func fetchAll() throws -> [NoteData] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return []
+        }
+        let data = try Data(contentsOf: fileURL)
+        let entities = try JSONDecoder().decode([NoteEntity].self, from: data)
+        return entities
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .map { NoteData(id: $0.id,
+                            content: $0.content,
+                            createdAt: $0.createdAt,
+                            updatedAt: $0.updatedAt) }
+    }
+
+    /// Converts incoming NoteData to NoteEntity, upserts by id
+    /// (updates if id exists, appends if new), overwrites file.
+    func save(_ note: NoteData) throws {
+        var entities = try loadEntities()
+        let incoming = NoteEntity(from: note)
+        if let index = entities.firstIndex(where: { $0.id == note.id }) {
+            entities[index] = incoming
+        } else {
+            entities.append(incoming)
+        }
+        try persist(entities)
+    }
+
+    /// Removes entity matching id, overwrites file.
+    func delete(id: UUID) throws {
+        var entities = try loadEntities()
+        entities.removeAll { $0.id == id }
+        try persist(entities)
+    }
+
+    // MARK: - Private helpers
+
+    /// Raw file read → [NoteEntity]. Returns [] if file missing.
+    private func loadEntities() throws -> [NoteEntity] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return []
+        }
+        let data = try Data(contentsOf: fileURL)
+        return try JSONDecoder().decode([NoteEntity].self, from: data)
+    }
+
+    /// Encodes [NoteEntity] and atomically writes to disk.
+    private func persist(_ entities: [NoteEntity]) throws {
+        let data = try JSONEncoder().encode(entities)
+        try data.write(to: fileURL, options: .atomic)
+    }
+}
+
+══════════════════════════════════════
+VIEWS LAYER
+══════════════════════════════════════
+
+File: Sources/SkipNotes/Views/NoteListView.swift
+
+/// Root view. Owns the ViewModel as @State so it lives for the
+/// lifetime of this view tree.
+struct NoteListView: View {
+    @State private var vm = NotesViewModel()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(vm.notes) { note in
+                    NavigationLink {
+                        /// Pass a binding into vm.notes so edits
+                        /// reflect immediately without extra state.
+                        /// Find the index by id for the binding.
+                        NoteEditorView(
+                            note: bindingFor(note),
+                            vm: vm
+                        )
+                    } label: {
+                        NoteRowView(note: note)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            vm.deleteNote(id: note.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Notes")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink {
+                        NoteEditorView(
+                            note: .constant(vm.newNote()),
+                            vm: vm
+                        )
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                }
+            }
+            .onAppear { vm.loadNotes() }
+            .alert("Error", isPresented: .constant(vm.errorMessage != nil)) {
+                Button("OK") { vm.errorMessage = nil }
+            } message: {
+                Text(vm.errorMessage ?? "")
+            }
+        }
+    }
+
+    /// Returns a Binding<NoteData> into vm.notes for a given note.
+    /// Safe: if note disappears (e.g. deleted), binding falls back
+    /// to a blank note rather than crashing.
+    private func bindingFor(_ note: NoteData) -> Binding<NoteData> {
+        Binding(
+            get: {
+                vm.notes.first { $0.id == note.id } ?? note
+            },
+            set: { updated in
+                if let index = vm.notes.firstIndex(where: {
+                    $0.id == updated.id
+                }) {
+                    vm.notes[index] = updated
+                }
+            }
+        )
+    }
+}
+
+File: Sources/SkipNotes/Views/NoteRowView.swift
+
+/// Stateless list row. Receives NoteData as a value — no bindings.
+/// Title uses .headline (bold, primary color).
+/// previewBody uses .subheadline (normal weight, secondary color).
+/// If previewBody is empty, only the title line is shown.
+struct NoteRowView: View {
+    let note: NoteData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(note.title)
+                .font(.headline)
+                .lineLimit(1)
+
+            if !note.previewBody.isEmpty {
+                Text(note.previewBody)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+File: Sources/SkipNotes/Views/NoteEditorView.swift
+
+/// Full-screen editor. Receives a Binding<NoteData> so edits flow
+/// back to the list without a separate save-to-state step.
+/// The FIRST LINE of the TextEditor content is the title —
+/// no separate title field exists. This is intentional.
+struct NoteEditorView: View {
+    @Binding var note: NoteData
+    let vm: NotesViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $note.content)
+                .font(.body)
+                .padding(.horizontal, 4)
+
+            /// Placeholder shown only when content is empty.
+            if note.content.isEmpty {
+                Text("First line becomes the title.\nStart writing…")
+                    .font(.body)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .allowsHitTesting(false)
+            }
+        }
+        .navigationTitle(note.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Save") {
+                    note.updatedAt = Date()
+                    vm.saveNote(note)
+                    dismiss()
+                }
+                .fontWeight(.semibold)
+                .disabled(note.content.trimmingCharacters(
+                    in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+}
+
+══════════════════════════════════════
+APP ENTRY POINT
+══════════════════════════════════════
+
+File: Sources/SkipNotes/SkipNotesApp.swift
+
+import SwiftUI
+
+@main
+struct SkipNotesApp: App {
+    var body: some Scene {
+        WindowGroup {
+            NoteListView()
+        }
+    }
+}
+
+══════════════════════════════════════
+PACKAGE.SWIFT
+══════════════════════════════════════
+
+// swift-tools-version: 5.9
+import PackageDescription
+
+let package = Package(
+    name: "SkipNotes",
+    platforms: [
+        .iOS(.v16),
+        .macOS(.v13),
+        .android(.v26)
+    ],
+    dependencies: [
+        .package(
+            url: "https://source.skip.tools/skip.git",
+            from: "1.0.0"),
+        .package(
+            url: "https://source.skip.tools/skip-ui.git",
+            from: "1.0.0"),
+        .package(
+            url: "https://source.skip.tools/skip-foundation.git",
+            from: "1.0.0"),
+        .package(
+            url: "https://source.skip.tools/skip-model.git",
+            from: "1.0.0"),
+    ],
+    targets: [
+        .target(
+            name: "SkipNotes",
+            dependencies: [
+                .product(name: "SkipUI", package: "skip-ui"),
+                .product(name: "SkipFoundation", package: "skip-foundation"),
+                .product(name: "SkipModel", package: "skip-model"),
+            ],
+            plugins: [
+                .plugin(name: "skipstone", package: "skip")
+            ]
+        )
+    ]
+)
+
+══════════════════════════════════════
+GITHUB ACTIONS — ANDROID CI
+══════════════════════════════════════
+
+File: .github/workflows/android.yml
+
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    # macos-14 is Apple Silicon (M1). REQUIRED — the Swift Android SDK
+    # does NOT compile on Intel (macos-13) or Linux runners.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (required by Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Skip toolchain
+        run: brew install skiptools/skip/skip
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Cache Skip build artifacts
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: skip-${{ hashFiles('**/Package.swift', '**/Package.resolved') }}
+          restore-keys: skip-
+
+      - name: Build iOS (Swift — no simulator needed)
+        run: swift build
+
+      - name: Build Android APK
+        run: skip android build --configuration release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkipNotes-android-${{ github.sha }}
+          path: .build/android/**/*.apk
+          retention-days: 14
+
+  run-on-emulator:
+    runs-on: macos-14
+    needs: build-and-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Skip toolchain
+        run: brew install skiptools/skip/skip
+
+      - name: Install Android emulator SDK
+        run: skip android sdk install
+
+      - name: Create AVD
+        run: skip android emulator create --name CI_AVD
+
+      - name: Launch emulator in background
+        run: |
+          skip android emulator launch --name CI_AVD &
+          # Wait for emulator to fully boot before proceeding
+          adb wait-for-device
+          # Additional wait for system services to stabilize
+          adb shell while [[ -z $(getprop sys.boot_completed) ]]; \
+            do sleep 3; done
+          echo "Emulator ready"
+
+      - name: Download APK from previous job
+        uses: actions/download-artifact@v4
+        with:
+          name: SkipNotes-android-${{ github.sha }}
+          path: apk/
+
+      - name: Install APK on emulator
+        run: |
+          APK=$(find apk/ -name "*.apk" | head -1)
+          echo "Installing $APK"
+          adb install "$APK"
+
+      - name: Launch app on emulator
+        run: |
+          adb shell am start \
+            -n com.abielcode.skipnotes/.MainActivity
+          # Give app time to fully render
+          sleep 8
+
+      - name: Capture screenshot as proof of run
+        run: |
+          adb exec-out screencap -p > screenshot-android.png
+          echo "Screenshot captured"
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screenshot-${{ github.sha }}
+          path: screenshot-android.png
+          retention-days: 14
+
+══════════════════════════════════════
+README.md
+══════════════════════════════════════
+
+Generate a README.md containing:
+
+1. Title and one-paragraph description of the app.
+
+2. Architecture section with this ASCII diagram:
+
+   ┌─────────────────────────────────────┐
+   │  VIEWS                              │
+   │  NoteListView · NoteRowView         │
+   │  NoteEditorView                     │
+   └──────────────┬──────────────────────┘
+                  │ @Observable
+   ┌──────────────▼──────────────────────┐
+   │  DOMAIN                             │
+   │  NoteData (model)                   │
+   │  NoteRepositoryProtocol             │
+   │  NotesViewModel                     │
+   └──────────────┬──────────────────────┘
+                  │ conforms to protocol
+   ┌──────────────▼──────────────────────┐
+   │  DATA                               │
+   │  LocalNoteRepository                │
+   │  NoteEntity (Codable)               │
+   └──────────────┬──────────────────────┘
+                  │
+   ┌──────────────▼──────────────────────┐
+   │  SHARED                             │
+   │  NoteRepresentable (protocol)       │
+   └─────────────────────────────────────┘
+
+3. Setup section:
+   - Prerequisites: macOS 14+, Xcode 15+, Homebrew
+   - brew install skiptools/skip/skip
+   - open Package.swift in Xcode
+
+4. Run on iOS: select iOS Simulator target in Xcode, Cmd+R
+
+5. Run on Android:
+   - skip android emulator create
+   - skip android emulator launch
+   - Select SkipNotes Android target in Xcode, Cmd+R
+
+6. GitHub Actions badge:
+   ![Android CI](https://github.com/YOUR_USERNAME/SkipNotes/actions/
+   workflows/android.yml/badge.svg)
+
+══════════════════════════════════════
+HARD CONSTRAINTS
+══════════════════════════════════════
+
+1.  ZERO #if os(Android) or #if SKIP blocks anywhere in Views,
+    Domain, or Shared layers. SkipUI and SkipFoundation handle
+    platform differences transparently.
+
+2.  NoteRepositoryProtocol methods accept and return NoteData only.
+    The Data layer is NEVER visible above it.
+
+3.  NoteEntity is NEVER imported or referenced outside Data/.
+    It is an implementation detail of LocalNoteRepository.
+
+4.  NoteRepresentable has NO Codable requirement. It is a pure
+    identity contract. Codable belongs only to NoteEntity.
+
+5.  LocalNoteRepository is the ONLY type that touches FileManager,
+    Data(contentsOf:), or JSONEncoder/JSONDecoder.
+
+6.  Sorting by updatedAt descending happens in fetchAll() inside
+    LocalNoteRepository, not in the ViewModel.
+
+7.  The ViewModel catches ALL throws from the repository. No
+    uncaught errors propagate to Views. Errors surface via
+    errorMessage: String? only.
+
+8.  The TextEditor binds directly to note.content. There is NO
+    separate title text field. The first line of content IS the
+    title — NoteData.title derives it via computed property.
+
+9.  NoteRowView receives NoteData as a let (value, not binding).
+    It is a pure display component with no side effects.
+
+10. The GitHub Actions workflow MUST use macos-14 runners.
+    macos-13 (Intel) will NOT compile the Swift Android SDK.
+    Ubuntu runners will NOT work for Skip Fuse builds.
+
+11. Use .atomic write option in Data.write(to:options:) to prevent
+    file corruption on interrupted writes.
+
+12. Output ALL files with complete content. Do NOT truncate,
+    summarize, or use placeholder comments like "// implement here".
+    Every function body must be fully implemented.
