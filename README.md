@@ -90,6 +90,11 @@ Select the target in Xcode and press **Cmd+R**.
 
 ## Run on Android
 
+**No Android Studio or local Android tooling required.**
+The CI pipeline (GitHub Actions) spins up an Android emulator, builds the APK, installs it, and uploads a screenshot as proof of run. To validate Android behaviour, simply push to `main` and check the artifacts in the Actions tab.
+
+For local Android development if needed:
+
 ```bash
 # Create a virtual device (one-time)
 skip android emulator create
