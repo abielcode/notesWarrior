@@ -145,7 +145,7 @@ This POC surfaced a platform declaration mismatch inside the Skip package ecosys
 
 Xcode validates transitive package platform requirements even when the dependency is conditioned to Android-only builds (`.when(platforms: [.android])`), which surfaces this mismatch as a package resolution error.
 
-An issue has been filed with the Skip team: [skiptools/skip-android-bridge](https://github.com/skiptools/skip-android-bridge/issues).
+An issue has been filed with the Skip team: [skiptools/skip-android-bridge](https://github.com/skiptools/skip-android-bridge/issues/26)).
 
 ## Setup
 
